@@ -12,6 +12,8 @@ WriteMakefile
 		'Apache::RequestRec'	=> 0,
 		'Apache::RequestIO'	=> 0,
 		'Apache::RequestUtil'	=> 0,
+		'Apache::Log'		=> 0,
+		'File::Basename'	=> 0,
 		'Text::VimColor'	=> 0
 	}
 );

@@ -2,20 +2,31 @@ package Apache::VimColor;
 
 use strict;
 use warnings;
-use vars qw/$VERSION/;
+use vars (qw($VERSION));
 
-use Apache::Const qw/:common/;
+use Apache::Const (qw(:common));
 use Apache::Server;
 use Apache::RequestRec;
 use Apache::RequestIO;
 use Apache::RequestUtil;
+use Apache::Log;
+use File::Basename (qw(basename));
 use Text::VimColor;
 
-$VERSION = '2.00';
+$VERSION = '2.10';
 
 =head1 NAME
 
 B<Apache::VimColor> - Apache mod_perl Handler for syntax highlighting in HTML.
+
+=head1 DESCRIPTION
+
+This apache handler converts text files in syntax highlighted HTML output using
+L<Text::VimColor>. If allowed by the configuration the visitor can also
+download the text-file in it's original form.
+
+Since Text::VimColor isn't the fastest module this version uses
+L<Cache::Cache|Cache::Cache> to cache the parsed files.
 
 =head1 SYNOPSIS
 
@@ -31,16 +42,14 @@ The apache configuration neccessary might look a bit like this:
 
     # Below here is optional
     PerlSetVar  AllowDownload  "True"
-    PerlSetVar  CacheSize      20
+    PerlSetVar  CacheType      "File"
+    PerlSetVar  CacheSize      1048576 # 1 MByte
+    PerlSetVar  CacheExpire    7200    # 2 hours
     PerlSetVar  StyleSheet     "http://domain.com/stylesheet.css"
     PerlSetVar  TabSize        8
   </Location>
 
-=head1 DESCRIPTION
-
-This apache handler converts text files in syntax highlighted HTML output using
-L<Text::VimColor>. If allowed by the configuration the visitor can also
-download the text-file in it's original form.
+For a complete list of all options and descriptions see L<below|/"CONFIGURATION DIRECTIVES">.
 
 =cut
 
@@ -96,30 +105,6 @@ sub escape_tabs ($$)
 	return ($retval);
 }
 
-sub handler
-{
-	my $req = shift;
-	my $filename = $req->filename ();
-	my $dl = 0;
-	my $dl_ok = 0;
-	my $vim;
-	my $elems;
-	my $cssfile = '';
-	my $tabstop  = 8;
-	my $cache_size = 0;
-	my $cache_ptr;
-	my $cache_entry;
-
-	if (!-e $filename or -z $filename)
-	{
-		return (NOT_FOUND);
-	}
-
-	if (!-r $filename)
-	{
-		return (FORBIDDEN);
-	}
-
 =head1 CONFIGURATION DIRECTIVES
 
 All features of the this PerlHandler can be set in the apache configuration
@@ -129,6 +114,18 @@ using the I<PerlSetVar> directive. For example:
 					# apache directives
 
 =over 4
+
+=cut
+
+sub get_config ($)
+{
+	my $req = shift;
+	my $options =
+	{
+		allow_dl	=> 0,
+		cssfile		=> '',
+		tabstop		=> 8
+	};
 
 =item AllowDownload
 
@@ -144,33 +141,112 @@ link will be included in the output.
 		if (($conf eq 'on') or ($conf eq 'true')
 				or ($conf eq 'yes'))
 		{
-			$dl_ok = 1;
+			$options->{'allow_dl'} = 1;
 		}
 	}
 
+=item CacheType
+
+Selects the caching method to use. Depending on your choices a
+L<Cache::Cache|Cache::Cache> module will be loaded and used. The default is not
+to use any caching. I<CacheType> can be one of:
+
+    Memory
+    SharedMemory
+    File
+
+Although the default is not to use caching, if I<CacheSize> is given and
+I<CacheType> is not, then B<Memory> is being used. Obviously these values
+correspond to the B<Cache::*Cache> modules.
+
+The modules are loaded at runtime. If errors occur they are logged to Apache's
+errorlog.
+
 =item CacheSize
 
-If this option is set to a positive value this many pages will be cached. The
-cache uses a LRU (least recently used) algorithm to remove entries from the
-cache. Most likely there is one cache for each child, but this depends on your
-configuration. If a file changes it is automatically re-parsed. The default is
-not to cache any files.
+Sets the maximum size of the cache in bytes. If I<CacheSize> is non-zero the
+B<Cache::SizeAware*Cache> variants will be used. 
+
+=item CacheExpire
+
+I<CacheExpire> sets the expiration time. The value must be given in seconds.
+Defaults to 3600 seconds (one hour). See L<Cache::Cache> for details.
 
 =cut
 
-	if ($req->dir_config ('CacheSize'))
+	if ($req->dir_config ('CacheType') or $req->dir_config ('CacheSize'))
 	{
-		my $srv = $req->server ()->server_hostname ();
-		my $loc = $req->location ();
-		my $tmp = $req->dir_config ('CacheSize');
-		$tmp =~ s/\D//g;
+		my $cid = $req->server ()->server_hostname () . ':' . $req->location ();
+		my $cache;
 
-		if ($tmp)
+		if (defined ($Cache->{$cid}))
 		{
-			$Cache->{"$srv\:$loc"} = [] unless (defined ($Cache->{"$srv\:$loc"}));
-			$cache_ptr = $Cache->{"$srv\:$loc"};
-			$cache_size = $tmp;
+			$cache = $Cache->{$cid};
 		}
+		else
+		{
+			my $type = 'File';
+			my $size = 0;
+			my $expr = 3600;
+			my $cmd;
+
+			if ($req->dir_config ('CacheType'))
+			{
+				my $tmp = lc ($req->dir_config ('CacheType'));
+
+				if ($tmp =~ m/((?:shared)?memory|file)/)
+				{
+					if ($1 eq 'sharedmemory') { $type = 'SharedMemory'; }
+					elsif ($1 eq 'memory')    { $type = 'Memory'; }
+				}
+				else
+				{
+					$req->warn (qq(CacheType "$tmp" is not valid. Will use "File".));
+				}
+			}
+
+			if ($req->dir_config ('CacheSize'))
+			{
+				my $tmp = $req->dir_config ('CacheSize');
+				$tmp =~ s/\D//g;
+
+				$size = $tmp if ($tmp);
+			}
+
+			if ($req->dir_config ('CacheExpire'))
+			{
+				my $tmp = $req->dir_config ('CacheExpire');
+				$tmp =~ s/\D//g;
+
+				$expr = $tmp if ($tmp);
+			}
+			
+
+			if ($size)
+			{
+				$type = "SizeAware$type";
+			}
+			$type .= 'Cache';
+
+			$cmd = "require Cache::$type; \$cache = Cache::$type->new ({ namespace => 'Apache::VimColor', default_expires_in => $expr";
+			if ($size)
+			{
+				$cmd .= ", max_size => $size";
+			}
+			$cmd .= ' });';
+
+			eval ($cmd);
+
+			if ($@)
+			{
+				$req->log ()->error (qq(Loading Cache::$type filed: $@"));
+				$cache = undef; # just to make sure ;)
+			}
+
+			$Cache->{$cid} = $cache if (defined ($cache));
+		}
+
+		$options->{'cache'} = $cache;
 	}
 
 =item TabStop
@@ -183,7 +259,7 @@ Sets the width of one tab symbol. The default is eight spaces.
 	{
 		my $tmp = $req->dir_config ('TabStop');
 		$tmp =~ s/\D//g;
-		$tabstop = $tmp if ($tmp);
+		$options->{'tabstop'} = $tmp if ($tmp);
 	}
 
 =item StyleSheet
@@ -210,33 +286,50 @@ classes:
 
 	if ($req->dir_config ('StyleSheet'))
 	{
-		$cssfile = $req->dir_config ('StyleSheet');
+		$options->{'cssfile'} = $req->dir_config ('StyleSheet');
 	}
 
+	return ($options);
 =back
 
 =cut
+}
 
-	# Set up header
+sub handler
+{
+	my $req = shift;
+	my $filename = $req->filename ();
+	my $filename_without_path = basename ($filename);
+	my $options = get_config ($req);
+	my $download = 0;
+	my $vim;
+	my $cache_entry;
+	my $elems;
+
+	if (!-e $filename or -z $filename)
+	{
+		return (NOT_FOUND);
+	}
+
+	if (!-r $filename)
+	{
+		return (FORBIDDEN);
+	}
+
+
 	if ($req->args ())
 	{
 		my %args = $req->args ();
 
 		if (exists ($args{'download'})
-				and ($dl_ok))
+				and ($options->{'allow_dl'}))
 		{
 			$req->content_type ("text/perl-script");
-			$dl = 1;
-		}
-		else
-		{
-			$req->content_type ("text/html");
 		}
 	}
-	else
-	{
-		$req->content_type ("text/html");
-	}
+
+	# Set up header
+	$req->content_type ($download ? 'text/perl-script' : 'text/html');
 
 	if ($req->header_only ())
 	{
@@ -245,7 +338,7 @@ classes:
 
 	# User wished to download. This is already checked against the
 	# `AllowDownload' option.
-	if ($dl)
+	if ($download)
 	{
 		return ($req->sendfile ($filename));
 	}
@@ -253,14 +346,16 @@ classes:
 	$req->print (<<HEADER);
 <html>
 	<head>
-		<title>$filename</title>
+		<title>$filename_without_path</title>
 HEADER
-	$req->print ($cssfile ? qq(\t\t<link rel="stylesheet" type="text/css" href="$cssfile" />\n) : <<HEADER);
+	$req->print ($options->{'cssfile'} ? qq(\t\t<link rel="stylesheet" type="text/css" href=") . $options->{'cssfile'} . qq(" />\n) : <<HEADER);
 		<style type="text/css">
 		<!--
+		a { color: inherit; background-color: transparent; }
 		body { background-color: black; color: white; }
-		div.fixed { font-family: monospace; border: 1px solid silver; padding: 1ex; }
-		a { display: block; width: auto; padding: 0.5ex; background-color: silver; color: black; }
+		div.fixed { border: 1px solid silver; font-family: monospace; padding: 1ex; }
+		div.notice { color: silver; background-color: inherit; font-size: smaller; text-align: right; }
+		h1 { font-size: normal; }
 		
 		span.Comment { color: blue; }
 		span.Constant { color: red; }
@@ -279,48 +374,43 @@ HEADER
 	</head>
 
 	<body>
-		<div class="fixed">
 HEADER
+	$req->print (qq(\t\t<h1>Source of <code>$filename_without_path</code>)
+	. ($options->{'allow_dl'} ? ' (<a href="' . $req->uri () . '?download">download</a>)' : '') . "</h1>\n");
 
-	if ($cache_size)
+	$req->print (qq(\t\t<div class="fixed">\n));
+
+	if (defined ($options->{'cache'}))
 	{
-		my $pos = 0;
-		my $size = scalar (@$cache_ptr);
 		my $mtime = (stat ($filename))[9] or die;
+		
+		$cache_entry = $options->{'cache'}->get ($filename);
 
-		for ($pos = 0; $pos < $size; $pos++)
+		if (defined ($cache_entry))
 		{
-			last if ($cache_ptr->[$pos][0] eq $filename);
-		}
-
-		if ($pos < $size)
-		{
-			$cache_entry = $cache_ptr->[$pos];
-			# LRU behavior
-			if ($pos != 0)
+			if ($cache_entry->[0] != $mtime)
 			{
-				splice (@$cache_ptr, $pos, 1);
-				unshift (@$cache_ptr, $cache_entry);
+				$cache_entry->[0] = $mtime;
+				$cache_entry->[1] = [];
 			}
 
-			# Only use this cache-entry if the mtime is unchanged.
-			$elems = $cache_entry->[2] if ($mtime == $cache_entry->[1])
-			
+			$elems = $cache_entry->[1];
 		}
 		else
 		{
-			# Create new entry.
-			$cache_entry = [$filename, $mtime, []];
-			unshift (@$cache_ptr, $cache_entry);
-			pop (@$cache_ptr) if ($size >= $cache_size);
+			$cache_entry = [$mtime, []];
+			$elems = $cache_entry->[1];
 		}
 	}
-	
+	else
+	{
+		$elems = [];
+	}
+
 	# $elems may have been loaded from the cache
-	if (!defined ($elems))
+	if (scalar (@$elems) == 0)
 	{
 		my $tmp;
-		$elems = [];
 
 		# This is slow, therefore the caching.
 		$vim = new Text::VimColor (file => $filename);
@@ -332,7 +422,10 @@ HEADER
 			push (@$elems, [$tmp->[$i][0], $tmp->[$i][1]]);
 		}
 
-		$cache_entry->[2] = $elems;
+		if (defined ($options->{'cache'}))
+		{
+			$options->{'cache'}->set ($filename, $cache_entry);
+		}
 	}
 
 	# For loop to prevent aliasing.
@@ -341,7 +434,7 @@ HEADER
 		my $type  = $elems->[$i][0];
 		my $value = $elems->[$i][1];
 
-		$value = escape_tabs ($value, $tabstop);
+		$value = escape_tabs ($value, $options->{'tabstop'});
 		$value = escape_html ($value);
 
 		if ($type)
@@ -355,15 +448,22 @@ HEADER
 	}
 
 	$req->print ("\t\t</div>\n");
-	$req->print (qq(\t\t<a href=") . $req->uri () . qq(?download">Download this file</a>\n)) if ($dl_ok);
-	$req->print ("\t</body>\n</html>\n");
+	$req->print (<<FOOTER);
+		<div class="notice">
+			Generated with <a href="http://search.cpan.org/perldoc?Apache%3A%3AVimColor">Apache::VimColor $VERSION</a>
+			by <a href="http://verplant.org/">Florian octo Forster</a>
+		</div>
+	</body>
+</html>
+FOOTER
 
 	return (OK);
 }
 
 =head1 SEE ALSO
 
-L<perl(1)>, L<mod_perl(3)>, L<Apache(3)>, L<Text::VimColor|Text::VimColor>
+L<perl(1)>, L<mod_perl(3)>, L<Apache(3)>, L<Text::VimColor|Text::VimColor>,
+L<Cache::Cache>
 
 =head1 AUTHOR
 
@@ -376,6 +476,6 @@ L<perl(1)>, L<mod_perl(3)>, L<Apache(3)>, L<Text::VimColor|Text::VimColor>
 Copyright (c) 2005 Florian Forster.
 
 All rights reserved. This package is free software; you can redistribute it
-	and/or modify it under the same terms as Perl itself.
+and/or modify it under the same terms as Perl itself.
 
 =cut

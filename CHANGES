@@ -1,3 +1,8 @@
+Version 2.10, Mar 16 2005, Florian Forster <octo@verplant.org>
+- Cache::Cache is now being used as requested (RT#11883). Apache::VimColor is
+  still installable without Cache::Cache, but caching won't work without it.
+- The output has been changed a bit.
+
 Version 2.00, Mar 15 2005, Florian Forster <octo@verplant.org>
 - Implemented caching as requested (RT#11883)
 - Fixed behavior when (trying to) access non-existent files or file which are
