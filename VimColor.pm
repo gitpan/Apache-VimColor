@@ -5,15 +5,16 @@ use warnings;
 use vars (qw($VERSION));
 
 use Apache::Const (qw(:common));
-use Apache::Server;
 use Apache::RequestRec;
 use Apache::RequestIO;
 use Apache::RequestUtil;
+use Apache::Response;
 use Apache::Log;
+use Apache::Server;
 use File::Basename (qw(basename));
 use Text::VimColor;
 
-$VERSION = '2.10';
+$VERSION = '2.20';
 
 =head1 NAME
 
@@ -22,11 +23,13 @@ B<Apache::VimColor> - Apache mod_perl Handler for syntax highlighting in HTML.
 =head1 DESCRIPTION
 
 This apache handler converts text files in syntax highlighted HTML output using
-L<Text::VimColor>. If allowed by the configuration the visitor can also
-download the text-file in it's original form.
+L<Text::VimColor|Text::VimColor>. If allowed by the configuration the visitor
+can also download the text-file without syntax highlighting.
 
-Since Text::VimColor isn't the fastest module this version uses
-L<Cache::Cache|Cache::Cache> to cache the parsed files.
+Since Text::VimColor isn't the fastest module this version can use
+L<Cache::Cache|Cache::Cache> to cache the parsed files. Also the I<ETag> and
+I<LastModified> HTTP headers are set to help browsers and proxy servers to
+cache the URL.
 
 =head1 SYNOPSIS
 
@@ -130,7 +133,7 @@ sub get_config ($)
 =item AllowDownload
 
 Setting this option to B<true> will allow plaintext downloads of the files. A
-link will be included in the output.
+link will be included in the output. The default is not to allow downloads.
 
 =cut
 
@@ -221,7 +224,6 @@ Defaults to 3600 seconds (one hour). See L<Cache::Cache> for details.
 				$expr = $tmp if ($tmp);
 			}
 			
-
 			if ($size)
 			{
 				$type = "SizeAware$type";
@@ -302,6 +304,7 @@ sub handler
 	my $filename_without_path = basename ($filename);
 	my $options = get_config ($req);
 	my $download = 0;
+	my $mtime;
 	my $vim;
 	my $cache_entry;
 	my $elems;
@@ -316,6 +319,7 @@ sub handler
 		return (FORBIDDEN);
 	}
 
+	$mtime = (stat ($filename))[9] or return (SERVER_ERROR);
 
 	if ($req->args ())
 	{
@@ -330,6 +334,8 @@ sub handler
 
 	# Set up header
 	$req->content_type ($download ? 'text/perl-script' : 'text/html');
+	$req->set_last_modified ($mtime);
+	$req->set_etag ();
 
 	if ($req->header_only ())
 	{
@@ -344,7 +350,11 @@ sub handler
 	}
 
 	$req->print (<<HEADER);
-<html>
+<?xml version="1.0" encoding="iso-8859-1"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+        "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
 	<head>
 		<title>$filename_without_path</title>
 HEADER
@@ -382,8 +392,6 @@ HEADER
 
 	if (defined ($options->{'cache'}))
 	{
-		my $mtime = (stat ($filename))[9] or die;
-		
 		$cache_entry = $options->{'cache'}->get ($filename);
 
 		if (defined ($cache_entry))

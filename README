@@ -1,5 +1,15 @@
 Apache::VimColor - Apache mod_perl Handler for syntax highlighting in HTML.
 
+DESCRIPTION
+
+  This apache handler converts text files in syntax highlighted HTML output
+  using Text::VimColor. If allowed by the configuration the visitor can also
+  download the text-file without syntax highlighting.
+
+  Since Text::VimColor isn't the fastest module this version can use
+  Cache::Cache to cache the parsed files. Also the ETag and LastModified HTTP
+  headers are set to help browsers and proxy servers to cache the URL.
+
 REQUIREMENTS
 
   * perl 5.6.0 or later
@@ -35,7 +45,7 @@ INSTALL
     make install
 
   Assuming that the install target is in your PERL5LIB path then you are now
-  ready to use Apache::VimColor. Configurate your Apache as it described in the
+  ready to use Apache::VimColor. Configurate your Apache as described in the
   man page.  Enjoy!
 
 LICENSE
