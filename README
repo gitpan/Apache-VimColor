@@ -1,9 +1,19 @@
-Apache::VimColor - Apache mod_perl PerlHandler for syntax highlighting
-various file types.
+Apache::VimColor - Apache mod_perl Handler for syntax highlighting in HTML.
 
-To install, first install mod_perl (see http://perl.apache.org).
-Then cd to the directory that contains this README file and type the
-following:
+REQUIREMENTS
+
+ * perl 5.6 or later
+ * Apache2          <http://httpd.apache.org/>
+ * mod_perl2        <http://perl.apache.org/>
+ * vim              <http://www.vim.org/>
+ * Text::VimColor   <http://cpan.org/modules/by-module/Text/>
+
+INSTALL
+
+Same procedure as every year, James!
+
+To install, first make sure all of the above requirements are met. Then cd to
+the directory that contains this README file and type the following:
 
     perl Makefile.PL
 
@@ -22,8 +32,8 @@ PREFIX) then you can now type:
     make install
 
 Presuming that the install target is in your PERL5LIB path then you are
-now ready to use Apache::VimColor. Configurate your apache as it described
-in the man page. 
+now ready to use Apache::VimColor. Configurate your Apache as it described
+in the man page.
 Enjoy!
 
 Copyright (c) 2005 Florian Forster <octo(at)verplant.org>

@@ -8,6 +8,7 @@ WriteMakefile
 	'PREREQ_PM'	=>
 	{
 		'Apache::Const'		=> 0,
+		'Apache::Server'	=> 0,
 		'Apache::RequestRec'	=> 0,
 		'Apache::RequestIO'	=> 0,
 		'Apache::RequestUtil'	=> 0,

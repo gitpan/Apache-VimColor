@@ -1,2 +1,7 @@
+Version 2.00, Mar 15 2005, Florian Forster <octo@verplant.org>
+- Implemented caching as requested (RT#11883)
+- Fixed behavior when (trying to) access non-existent files or file which are
+  unreadable (sending an ``File not found'' or ``Forbidden'' as needed..)
+
 Version 1.00, Mar 14 2005, Florian Forster <octo@verplant.org>
 - Initial release

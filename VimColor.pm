@@ -5,17 +5,17 @@ use warnings;
 use vars qw/$VERSION/;
 
 use Apache::Const qw/:common/;
+use Apache::Server;
 use Apache::RequestRec;
 use Apache::RequestIO;
 use Apache::RequestUtil;
 use Text::VimColor;
 
-$VERSION = '1.00';
+$VERSION = '2.00';
 
 =head1 NAME
 
-B<Apache::VimColor> - Apache mod_perl PerlHandler for syntax highlighting in
-HTML.
+B<Apache::VimColor> - Apache mod_perl Handler for syntax highlighting in HTML.
 
 =head1 SYNOPSIS
 
@@ -31,8 +31,9 @@ The apache configuration neccessary might look a bit like this:
 
     # Below here is optional
     PerlSetVar  AllowDownload  "True"
-    PerlSetVar  TabSize        8
+    PerlSetVar  CacheSize      20
     PerlSetVar  StyleSheet     "http://domain.com/stylesheet.css"
+    PerlSetVar  TabSize        8
   </Location>
 
 =head1 DESCRIPTION
@@ -44,6 +45,7 @@ download the text-file in it's original form.
 =cut
 
 our $Position = 0;
+our $Cache = {};
 
 return (1);
 
@@ -104,6 +106,19 @@ sub handler
 	my $elems;
 	my $cssfile = '';
 	my $tabstop  = 8;
+	my $cache_size = 0;
+	my $cache_ptr;
+	my $cache_entry;
+
+	if (!-e $filename or -z $filename)
+	{
+		return (NOT_FOUND);
+	}
+
+	if (!-r $filename)
+	{
+		return (FORBIDDEN);
+	}
 
 =head1 CONFIGURATION DIRECTIVES
 
@@ -130,6 +145,31 @@ link will be included in the output.
 				or ($conf eq 'yes'))
 		{
 			$dl_ok = 1;
+		}
+	}
+
+=item CacheSize
+
+If this option is set to a positive value this many pages will be cached. The
+cache uses a LRU (least recently used) algorithm to remove entries from the
+cache. Most likely there is one cache for each child, but this depends on your
+configuration. If a file changes it is automatically re-parsed. The default is
+not to cache any files.
+
+=cut
+
+	if ($req->dir_config ('CacheSize'))
+	{
+		my $srv = $req->server ()->server_hostname ();
+		my $loc = $req->location ();
+		my $tmp = $req->dir_config ('CacheSize');
+		$tmp =~ s/\D//g;
+
+		if ($tmp)
+		{
+			$Cache->{"$srv\:$loc"} = [] unless (defined ($Cache->{"$srv\:$loc"}));
+			$cache_ptr = $Cache->{"$srv\:$loc"};
+			$cache_size = $tmp;
 		}
 	}
 
@@ -177,6 +217,7 @@ classes:
 
 =cut
 
+	# Set up header
 	if ($req->args ())
 	{
 		my %args = $req->args ();
@@ -197,13 +238,13 @@ classes:
 		$req->content_type ("text/html");
 	}
 
-	#$req->send_http_header ();
-
 	if ($req->header_only ())
 	{
 		return (OK);
 	}
 
+	# User wished to download. This is already checked against the
+	# `AllowDownload' option.
 	if ($dl)
 	{
 		return ($req->sendfile ($filename));
@@ -241,13 +282,65 @@ HEADER
 		<div class="fixed">
 HEADER
 
-	$vim = new Text::VimColor (file => $filename);
-	$elems = $vim->marked ();
-
-	for (@$elems)
+	if ($cache_size)
 	{
-		my $type  = $_->[0];
-		my $value = $_->[1];
+		my $pos = 0;
+		my $size = scalar (@$cache_ptr);
+		my $mtime = (stat ($filename))[9] or die;
+
+		for ($pos = 0; $pos < $size; $pos++)
+		{
+			last if ($cache_ptr->[$pos][0] eq $filename);
+		}
+
+		if ($pos < $size)
+		{
+			$cache_entry = $cache_ptr->[$pos];
+			# LRU behavior
+			if ($pos != 0)
+			{
+				splice (@$cache_ptr, $pos, 1);
+				unshift (@$cache_ptr, $cache_entry);
+			}
+
+			# Only use this cache-entry if the mtime is unchanged.
+			$elems = $cache_entry->[2] if ($mtime == $cache_entry->[1])
+			
+		}
+		else
+		{
+			# Create new entry.
+			$cache_entry = [$filename, $mtime, []];
+			unshift (@$cache_ptr, $cache_entry);
+			pop (@$cache_ptr) if ($size >= $cache_size);
+		}
+	}
+	
+	# $elems may have been loaded from the cache
+	if (!defined ($elems))
+	{
+		my $tmp;
+		$elems = [];
+
+		# This is slow, therefore the caching.
+		$vim = new Text::VimColor (file => $filename);
+		$tmp = $vim->marked ();
+
+		# For loop to prevent aliasing.
+		for (my $i = 0; $i < scalar (@$tmp); $i++)
+		{
+			push (@$elems, [$tmp->[$i][0], $tmp->[$i][1]]);
+		}
+
+		$cache_entry->[2] = $elems;
+	}
+
+	# For loop to prevent aliasing.
+	for (my $i = 0; $i < scalar (@$elems); $i++)
+	{
+		my $type  = $elems->[$i][0];
+		my $value = $elems->[$i][1];
+
 		$value = escape_tabs ($value, $tabstop);
 		$value = escape_html ($value);
 
