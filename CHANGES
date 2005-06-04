@@ -1,3 +1,7 @@
+Version 2.30, Jun 04 2005, Florian Forster <octo@verplant.org>
+- The possibility to display line numbers has been added due to popular
+  request ;)
+
 Version 2.20, Mar 25 2005, Florian Forster <octo@verplant.org>
 - Send E-Tag and Last-Modified HTTP-header fields so caching of generated
   output in HTTP-caches (i.e. proxies) is possible.

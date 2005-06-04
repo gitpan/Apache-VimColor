@@ -14,7 +14,7 @@ use Apache::Server;
 use File::Basename (qw(basename));
 use Text::VimColor;
 
-$VERSION = '2.20';
+$VERSION = '2.30';
 
 =head1 NAME
 
@@ -50,6 +50,7 @@ The apache configuration neccessary might look a bit like this:
     PerlSetVar  CacheExpire    7200    # 2 hours
     PerlSetVar  StyleSheet     "http://domain.com/stylesheet.css"
     PerlSetVar  TabSize        8
+    PerlSetVar  LineNumbers    "True"
   </Location>
 
 For a complete list of all options and descriptions see L<below|/"CONFIGURATION DIRECTIVES">.
@@ -70,8 +71,8 @@ sub escape_html ($)
 	s/>/&gt;/g;
 	s/"/&quot;/g;
 
-	s#\n#<br />\n#g;
-	s/(\s\s+)/'&nbsp;' x length ($1)/ge;
+	s#\n#<br />\n#sg;
+	s/(  +)/'&nbsp;' x length ($1)/ge;
 
 	return ($_);
 }
@@ -84,7 +85,7 @@ sub escape_tabs ($$)
 
 	$value =~ s/\r//g;
 
-	while ($value =~ s/^([^\n\t]*)([\n\t])//)
+	while ($value =~ s/^([^\n\t]*)([\n\t])//s)
 	{
 		$retval .= $1;
 		$Position += length ($1);
@@ -292,9 +293,6 @@ classes:
 	}
 
 	return ($options);
-=back
-
-=cut
 }
 
 sub handler
@@ -308,6 +306,7 @@ sub handler
 	my $vim;
 	my $cache_entry;
 	my $elems;
+	my $output = '';
 
 	if (!-e $filename or -z $filename)
 	{
@@ -328,7 +327,7 @@ sub handler
 		if (exists ($args{'download'})
 				and ($options->{'allow_dl'}))
 		{
-			$req->content_type ("text/perl-script");
+			$download = 1;
 		}
 	}
 
@@ -366,15 +365,16 @@ HEADER
 		div.fixed { border: 1px solid silver; font-family: monospace; padding: 1ex; }
 		div.notice { color: silver; background-color: inherit; font-size: smaller; text-align: right; }
 		h1 { font-size: normal; }
+		span.linenumber { white-space: pre; color: yellow; background-color: transparent; }
 		
-		span.Comment { color: blue; }
-		span.Constant { color: red; }
-		span.Identifier { color: cyan; }
-		span.Statement { color: yellow; }
-		span.PreProc { color: fuchsia; }
-		span.Type { color: lime; }
-		span.Special { color: fuchsia; }
-		span.Underlined { color: fuchsia; text-decoration: underline; }
+		span.Comment { color: blue; background-color: transparent; }
+		span.Constant { color: red; background-color: transparent; }
+		span.Identifier { color: cyan; background-color: transparent; }
+		span.Statement { color: yellow; background-color: transparent; }
+		span.PreProc { color: fuchsia; background-color: transparent; }
+		span.Type { color: lime; background-color: transparent; }
+		span.Special { color: fuchsia; background-color: transparent; }
+		span.Underlined { color: fuchsia; background-color: transparent; text-decoration: underline; }
 		span.Error { background-color: red; color: white; font-weight: bold; }
 		span.Todo { background-color: yellow; color: black; }
 		-->
@@ -447,13 +447,28 @@ HEADER
 
 		if ($type)
 		{
-			$req->print (qq(<span class="$type">$value</span>));
+			$output .= qq(<span class="$type">$value</span>);
 		}
 		else
 		{
-			$req->print ($value);
+			$output .= $value;
 		}
 	}
+
+=item LineNumbers
+
+Sets wether or not line numbers will be displayed. The Default is not to
+display line numbers.
+
+=back
+
+=cut
+	if ($req->dir_config ('LineNumbers') and ($req->dir_config ('LineNumbers') =~ m/^(yes|on|true)$/i))
+	{
+		my $linenumber = 1;
+		$output =~ s#^#sprintf (q(<span class="linenumber">%7u </span>), $linenumber++)#gem;
+	}
+	$req->print ($output);
 
 	$req->print ("\t\t</div>\n");
 	$req->print (<<FOOTER);
