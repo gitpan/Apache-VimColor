@@ -14,7 +14,7 @@ use Apache::Server;
 use File::Basename (qw(basename));
 use Text::VimColor;
 
-$VERSION = '2.30';
+$VERSION = '2.31';
 
 =head1 NAME
 
@@ -364,12 +364,12 @@ HEADER
 		body { background-color: black; color: white; }
 		div.fixed { border: 1px solid silver; font-family: monospace; padding: 1ex; }
 		div.notice { color: silver; background-color: inherit; font-size: smaller; text-align: right; }
-		h1 { font-size: normal; }
+		h1 { font-size: medium; }
 		span.linenumber { white-space: pre; color: yellow; background-color: transparent; }
 		
 		span.Comment { color: blue; background-color: transparent; }
 		span.Constant { color: red; background-color: transparent; }
-		span.Identifier { color: cyan; background-color: transparent; }
+		span.Identifier { color: aqua; background-color: transparent; }
 		span.Statement { color: yellow; background-color: transparent; }
 		span.PreProc { color: fuchsia; background-color: transparent; }
 		span.Type { color: lime; background-color: transparent; }

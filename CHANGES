@@ -1,3 +1,6 @@
+Version 2.31, Jun 04 2005, Florian Forster <octo@verplant.org>
+- Minor fixes to the included stylesheet.
+
 Version 2.30, Jun 04 2005, Florian Forster <octo@verplant.org>
 - The possibility to display line numbers has been added due to popular
   request ;)
